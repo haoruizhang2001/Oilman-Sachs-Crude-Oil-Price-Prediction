@@ -1,165 +1,81 @@
+# Oilman Sachs — WTI Crude Oil Price Prediction
 
-<img width="352" height="188" alt="Gemini_Generated_Image_8ik9ws8ik9ws8ik9" src="https://github.com/user-attachments/assets/4a3bd7de-2753-4da5-a8e0-643062aea46c" />
+Group project for **INDENG 242A (Machine Learning and Data Analytics I)**, UC Berkeley, Fall 2025.
+Team: Arthur Fang, Yuan Jiang, Jasmine Chen, Haorui Zhang, Wish Wang.
 
+A comparative study of forecasting methods for WTI crude oil, built around two questions that come up constantly in financial machine learning:
 
-# Meeting notes - Dec.5th
-- Baseline models
-	- Linear Regression (without feature selection)
-	- Random Walk Model
-- Processing data
-  - 4 Datasets:
-  - PCA, Lasso, Elastic net,  Original Dataset
-- Advanced models
- 	- Lasso regression
- 	- Random forest
- 	- Boosting (could check XGBoost, which is a version of boosting more useful for quant finance)
- 	- AR, MA, ARIMA
-	 - Neural Network 
+1. **Are advanced methods always superior?** We benchmark "black-box" models (Random Forest, XGBoost, LSTM) against a Random Walk, a linear baseline, and classical ARIMA-family models.
+2. **Is "garbage in, garbage out" solvable?** Financial feature sets are wide and noisy. We test whether aggressive feature engineering (PCA, Elastic Net) or high-capacity models can extract signal from 400+ raw inputs sampled at different frequencies.
 
----
-# Meeting Notes - Dec. 4th
+The full write-up is in [`FinalReportINDENG_242A.pdf`](FinalReportINDENG_242A.pdf).
 
-11 a.m. Section Gathering
+## Key findings
 
-"If you can do the data pipeline plus one well-designed linear vs tree-based comparison with proper backtesting, you’ll already have a very strong project. Anything beyond that is a bonus."
+- **For price-level regression, nothing beats the Random Walk.** RW reaches RMSE 1.34 / MAPE 1.48 % / R² 0.93 on the test set; tuned AR, MA and ARIMA land within a few percent of it. Random Forest and XGBoost are an order of magnitude worse (RMSE > 12, negative R²).
+- **For directional forecasting, the ranking flips.** Random Walk and ARIMA-family models have essentially no directional skill (AUC ≈ 0.45–0.50), while Random Forest and XGBoost achieve recall ≈ 0.98 and AUC ≈ 0.57.
+- **LSTMs are competitive on regression (best single model RMSE 1.78, R² 0.77) but unstable** across hyperparameters; a top-10 ensemble is *worse* than the best single model, and directional AUC is at chance.
+- Advanced methods are therefore not uniformly better: which model wins depends on whether the target has exploitable structure (direction) or is close to a martingale (level).
 
-Everyone works on their own ideas:
-- Wish: PCA vs. linear/feature selection by hand
-- Monthly frequencies v.s. daily frequencies
-- Baseline model
-- Forest
-  - Boosting
-- ARIMA
-- XGBoost
-- Factors (based on the financial knowledge)
+## Data
 
+- **Span:** 2021-01-04 → 2025-11-24 (post-COVID regime only), 1,229 daily observations.
+- **Target:** next-day WTI (`CL=F`) price / return.
+- **Market data (Yahoo Finance, 18 instruments):** WTI, Brent, RBOB gasoline, heating oil, natural gas, DXY, US 10Y yield, OVX, USD/CAD, copper, gold, S&P 500, XLE, EEM, TIP, IYT, OIH, HYG.
+- **Engineered features:** crack spread (3:2:1), Gold/Oil, Copper/Oil, Transport/Oil, Services/Oil ratios; RSI, MACD, Bollinger Bands, ATR, momentum, volatility and lagged features.
+- **Weekly fundamentals (EIA Weekly Petroleum Status Report, `data/psw01–07.xls`, 15 sheets):** crude and product stocks, field production, refinery inputs and utilization by PADD region. Forward-filled onto the daily grid and de-duplicated across EIA tables.
 
-  
+The cleaned panel is exported as `data/cleaned_oil_prediction_data.csv` (full) and `data/shortened_oil_data.csv` (reduced feature set used by the time-series and LSTM notebooks).
 
+## Methodology
 
-# INDENG242A Group Project Outline
-Goal: comparative study of different ML methods in a specific area of the financial market
+1. **Baseline** — OLS on all raw features (RMSE 25.5): fails on multicollinearity and dimension.
+2. **Feature engineering** — PCA within feature groups (446 features → 10 PCs, 97.8 % reduction) and Elastic Net selection by category (49 features retained; Lasso gave the same set with worse convergence).
+3. **Models**
+   - Random Walk, plus a *smoothed* variant anchored on the trailing two-week average with EIA fundamentals as a regime indicator.
+   - Random Forest (5-fold CV over `max_features`, 500 trees) and XGBoost.
+   - AR / MA / ARIMA with grid search on AIC/BIC and rolling one-step-ahead forecasts.
+   - LSTM: grid search over 216 configurations (sequence length, units, dropout, learning rate), top-10 ensemble.
+4. **Evaluation** — strict chronological 80/20 split. Regression metrics (RMSE, MAPE, AIC, R²) **and** directional-classification metrics (precision, recall, AUC-ROC, log loss), on the argument that trading P&L depends on direction and calibration more than on point accuracy.
 
-Possible subgoal: find a more nuanced algorithm for arbitrage/making profits, tailored towards the specific kind of market/futures/options/stock.
+### Results (test set)
 
-Discussion we want to touch upon:
-1. Effectiveness of different ML methods
-2. Rethinking the performance metrics
-  	- Conjecture: high accuracy does not directly translate to good returns in portfolios sometimes
-3. Connect the model's findings with mathematical/financial principles.
-	- Conjecture: We are likely to discuss some rules derived by Boosting/RF and see how they can be connected with math principles. When some variables are extremely high, the previous criteria become ineffective.
-4. Application insights: data collection time v.s. quality
-   	- One interesting thing to do is to check if the low-quality/less precise/less sensitive data could bring up a fairly similar model with one based on a high-quality model.
+| Model | RMSE | MAPE (%) | R² | Precision | Recall | AUC-ROC | Log loss |
+|---|---|---|---|---|---|---|---|
+| Linear baseline (raw) | 25.54 | 33.20 | −25.08 | 0.50 | 0.91 | 0.49 | 0.97 |
+| **Random Walk** | **1.34** | **1.48** | **0.93** | 0.00 | 0.00 | 0.50 | 0.69 |
+| Smoothed RW (with features) | 1.52 | 1.65 | 0.91 | 0.52 | 0.53 | 0.54 | 0.77 |
+| Random Forest | 13.13 | 19.19 | −5.89 | 0.50 | **0.99** | **0.57** | 1.28 |
+| XGBoost | 12.08 | 17.46 | −4.83 | 0.50 | 0.98 | **0.57** | 1.18 |
+| AR(7), tuned | 1.38 | 1.57 | 0.86 | 0.51 | 0.48 | 0.45 | 0.93 |
+| MA(20), tuned | 1.73 | 2.00 | 0.78 | 0.48 | 0.49 | 0.44 | 1.01 |
+| ARIMA(5,1,5), tuned | 1.37 | 1.53 | 0.86 | 0.49 | 0.45 | 0.47 | 0.91 |
+| LSTM (single best) | 1.78 | 2.14 | 0.77 | 0.49 | 0.46 | 0.47 | 0.86 |
+| LSTM (top-10 ensemble) | 3.65 | 5.16 | 0.01 | 0.47 | 0.42 | 0.45 | 0.80 |
 
+Per-model predictions and grid-search logs are in `results/`.
 
-## Markets Suggested
-- Oil Market (Crude oil CL=F)
-	- Structural, systematic, easy-to-understand, highly connected with macro-economy
-- Crypto
-	- Full of data sources, subject to sentiment and many other variables one could call
-- Beans/Corn (ZS, ZC)
-	- Extremely seasonal, can discuss stationarity/seasonality stuff
+## Repository layout
 
-## Data sources
-- yfiance
-- quantnet
-- Binance API
-- Alphavantage
+```
+notebooks/
+  Data Processing.ipynb        # yfinance download, feature engineering, EIA merge, QA, export
+  Time Series Modeling.ipynb   # AR / MA / ARIMA grid search, rolling forecasts, directional metrics
+  Neural Network Modeling.py   # LSTM grid search (216 configs) + top-10 ensemble
+  Neural Network Metrics.ipynb # regression + directional metrics for the LSTM runs
+  Analytics.ipynb              # LSTM result analysis, error analysis, trading-strategy backtest
+dashboard/
+  dashboard.py                 # builds a self-contained Plotly dashboard
+  prediction_dashboard.html    # interactive predictions-vs-actual dashboard (open in a browser)
+data/                          # EIA weekly reports (psw01–07.xls) and the cleaned panels
+results/                       # grid-search tables, predictions, metric summaries
+FinalReportINDENG_242A.pdf     # final report
+```
 
+## Reproducing
 
-### Tentative Research Plan
+```bash
+pip install yfinance pandas numpy xlrd scikit-learn statsmodels xgboost tensorflow plotly matplotlib seaborn openpyxl
+```
 
-#### Abstract
-This study aims to construct and compare systematic trading strategies for WTI Crude Oil (CL) futures. The research investigates whether non-linear machine learning models (XGBoost, LSTM) can generate superior risk-adjusted returns (Sharpe Ratio) compared to traditional linear benchmarks (Lasso Regression) by effectively integrating Term Structure signals with fundamental oil-market specific variables (Crack Spreads, Inventory Data, Macro-economic data).
-
-
-#### Target variables
-
-Essentially, we believe the majority of methods learnt in the course could be somewhat applied. As long as the predicted probabilities could be generated, the signals of buying/selling/holding could be set up through a certain numeric threshold, and furthermore, one could design nuanced strategies (Position sizing corresponding to the probabilities, for example)
-
-Therefore, we will try abusing the models to produce a binary variable such that
-$Y_{t} = 1$ if $\text{Return}_{t+5} > 0$ else $0$
-
-
-#### Models
-- Benchmark Model: Represents the traditional econometric approach, assuming linear relationships between fundamental factors and oil returns.
-  	- Simple linear regression
-  	- Lasso Regression.
-  	- ARIMA
-  	- Logistic regression
-- Funny Model: Attempts to find a high-dimensional space to separate the time period when going upwards and downwards.
-  	- KNN
-  	- SVM
-- Main Model (Tree-Based): Chosen for its ability to capture regime-switching behavior (e.g., "Inventory data matters more when Volatility is low").
-  	- Random Forest
-  	- Boosting (XGBoost specifically).
-- Challenger Model (We expect them to be more powerful, plus they have cool names):  (MLP?). Depends on our workload.
-  	- Neural Network
-  	- MLP
-	- LSTM
-
-
-
-#### Features
-There will be 4 big parts of features:
-1. Term Structure / Carry
-   - Roll yield
-   - Curve slope
-   - Curve curvature
-2. Oil fundamentals
-   - Crack spread ($P_{Gasoline} - P_{crude}$)
-   - Inventory Change (EIA Crude Oil Stocks Change, need forward fill)
-   - Open interest change ($\frac{OI_t - OI_{t-1}}{OI_{t-1}}$)
-3. Technical & Momentum
-   	- Time Series Momentum
-   	- Vol_Adjusted_Mom$\frac{\text{Return}}{\text{Volatility}}$
-   	- RSI
-   	- Basis Momentum
-4. Macro & Sentiment
-   	- DXY Return
-   	- US10Y
-   	- OVX
-
-There are definitely a lot more interesting and arguably reasonable data sources, but we also have to be wise about the price–performance ratio; if they are highly correlated with other variables, we definitely don't want to spend days wrangling data.
-
-While that also leads to another interesting question: would a proxy variable (correlating with a lot) outperform a more accurate/arguably more powerful, specific variable in the model?
-
-#### Backtesting
-- Walk-Forward Validation: Rolling window training (e.g., 3-year train, 1-year test) to prevent look-ahead bias.
-- Scenario analysis: Carefully select bullish/bearish time periods to prevent feeding models with overly optimistic/pessimistic information. 
-- Transaction Costs: Simulating realistic slippage and commission fees typical for retail/institutional futures trading.
-
-#### Performance metrics
-The model is not only about predictions, but it's more about profiting. That leads to 2 dimensions of metrics we have to check:
-1. Statistical / ML Metrics
-- Precision
-  	- Primary indicator: one doesn't have to capture every increase, but definitely needs to make a good shot when making the decisions. 
-- Accuracy
-  - Be careful about that, and we have to set a Benchmark Accuracy. If the stock market is in a bull scenario, blindly guessing a skyrocketing price will generate good accuracy.
-- Log-Loss
-  - High accuracy but low confidence is still not good. 
-- AUC-ROC
-2. Financial / Strategy Metrics
-- Risk-Adjusted Returns
-  - Sharpe Ratio
-  - Sortino Ratio
-  - Calmar Ratio
-- Absolute Risk
-  - Max Drawdown
-  - Volatility
-- Execution Metrics (advanced)
-  - Win Rate vs. Profit/Loss Ratio
-  - Turnover Rate
-
-#### Basic To-Do List
-
-1. Settle the market (the current structure of the tentative plan can be transferred into any market).
-2. Settle the time period (Different datasets have different units of time, and this may affect the quality of training)
-3. Collecting data 
-- Time-consuming work (each guy focuses on different stuff)
-- Need to be careful about the units of time
-- Could look up some interesting variables/ design some interesting variables (say, network variable across different sections of supply chain)
-4. Literature review on the application of ML to financial markets.
-  - Performance metrics?
-  - Which model works best in what situations?
-  - How to really apply them? How do they form the execution decisions, really?
+Run `notebooks/Data Processing.ipynb` first (it writes the cleaned CSVs), then the modeling notebooks in any order. `python notebooks/Neural\ Network\ Modeling.py` reproduces the LSTM grid search (slow on CPU). `python dashboard/dashboard.py` rebuilds `dashboard/prediction_dashboard.html` from `results/model_predictions_vs_actual.xlsx`.
